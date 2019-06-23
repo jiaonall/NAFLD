@@ -1,0 +1,38 @@
+1.Gene-based taxonomic and functional profiling of gut microbiota
+## quality control
+kneaddata --input $x'_paired_1'.fastq --input $x'_paired_2'.fastq -db hg38_db --output KneadP/ -t 12 --output-prefix $x –trimmomatic soft/Trimmomatic/ --trimmomatic-options 'SLIDINGWINDOW:4:15 MINLEN:40 LEADING:5 TRAILING:5'
+## Metaphlan2
+metaphlan2.py ~/clean/$x'_paired_1'.fastq, ~/clean/$x'_paired_2'.fastq --bowtie2out ~/Metaphlan_bowtie/$x'_metagenome'.bowtie2.bz2 --nproc 8 --input_type fastq > ~/Metaphlan/$x'_profile'.txt
+## Humann2
+humann2 --input ~/clean/$x'_paired_1'.fastq --output ~/HumannKEGG --taxonomic-profile NC_max_taxonomic_profile.tsv --memory-use maximum --remove-temp-output --threads 8 --id-mapping ~/humann2-0.11.2/legacy_kegg_idmapping.tsv --pathways-database ~/data/keggc --protein-database ~humann2-0.11.2/custom_database --bypass-nucleotide-search --remove-temp-output
+humann2_regroup_table --input ~/Humann2/$x'_paired_1_genefamilies'.tsv --groups uniref90_ko --output ~/KEGGgroup/$x'_ko_group'.tsv
+humann2_renorm_table --input ~/KEGGgroup/$x'_ko_group'.tsv --units "relab" --output ~/KEGGgroup/$x'_ko_group_rela'.tsv
+humann2_renorm_table --input ~/KEGGgroup/$x'_ko_group'.tsv --units "cpm" --output ~/KEGGgroup/$x'_ko_group_cpm'.tsv
+humann2_split_stratified_table --input ./KEGGgroup/$x'_ko_group_rela'.tsv --output ./KEGGgroup_stratified/
+
+2.Bin-based
+##assembly and gene prediction
+megahit -1 ~/clean/$x'_paired_1'.fastq -2 ~/clean/$x'_paired_2'.fastq -m 0.8 -t 16 --min-contig-len 500 --out-prefix $x -o ./assembly/$x'_assem'
+~/MetaGeneMark_linux_64/mgm/gmhmmp -k -a -d -f G -m ~/MetaGeneMark_linux_64/mgm/MetaGeneMark_v1.mod -o Genemark/$line'_gene'.gff assembly/$line'_assem'/$line'.contigs'.fa
+perl ~/software/MetaGeneMark_linux_64/mgm/aa_from_gff.pl < Genemark/$line'_gene'.gff > Genemark/$line'_gene'.faa
+perl ~/software/MetaGeneMark_linux_64/mgm/nt_from_gff.pl <  Genemark/$line'_gene'.gff > Genemark/$line'_gene'.fa
+cat Genemark/$line'_gene'.fa| sed "s|>|>$line\_|g" > Genemark_rename/$line'_gene'.fa
+cat Genemark/$line'_gene'.faa| sed "s|>|>$line\_|g" > Genemark_rename/$line'_gene'.faa
+bowtie2-build assembly/$line'_assem'/$line'.contigs'.fa Contig_index/$line'.contigs'.fa
+bowtie2 -p 30 -x Contig_index/$line'.contigs'.fa -1 ./clean/$line'_paired_1'.fastq -2 ./clean/$line'_paired_2'.fastq -S Contig_sam/$line'_contig'.sam
+shuf -n 15000000 bowtie/$line'.sam' > random/$line'_x'.sam
+~/software/2.7.7/soap.coverage -cvg -refsingle ~/ NC_predict_gene_unique.fa -o depth/$line'_depth_x'.txt -i random/$line'_x'.sam -sam -p 16
+###bin
+./mspminer settings.ini
+
+###reassemble
+megahit -1 ./clean/$line'_paired_1'.fastq -2 ./clean/$line'_paired_2'.fastq -m 0.8 -t 16 --min-contig-len 500 --out-prefix $line -o ./assembly/$line'_assem'
+bwa mem -t 16 ./MSP_ref/msp_$m'_'contig_ref.fa ./CRC/clean/$line'_paired_1'.fastq ./CRC/clean/$line'_paired_2'.fastq > ./MSP_bwa/msp_$m'_'$line'.sam'
+samtools view -S -bF 4 -@ 4 ./MSP_bwa/msp_$m'_'$line'.sam' > ./MSP_bwa/msp_$m'_'$line'_mapped'.bam
+
+samtools view -bF 8 -@ 4 ./MSP_bwa/msp_$m'_'$line'_mapped'.bam > ./MSP_bwa/msp_$m'_'$line'_paired'.bam
+samtools view -b -F 4 -f 8 -@ 4 ./MSP_bwa/msp_$m'_'$line'_mapped'.bam > ./MSP_bwa/msp_$m'_'$line'_unpaired'.bam
+samtools bam2fq -@ 4 -N -i1 ./MSP_map/msp_0$m'_'$line'_pair_1'.fastq -i2 ./MSP_map/msp_0$m'_'$line'_pair_2'.fastq ./MSP_bwa/msp_0$m'_'$line'_paired'.bam
+samtools bam2fq -@ 4 -N -i1 ./MSP_map/msp_0$m'_'$line'_unpair_1'.fastq -i2 ./MSP_map/msp_0$m'_'$line'_unpair_2'.fastq ./MSP_bwa/msp_0$m'_'$line'_unpaired'.bam
+cat ./MSP_map/msp_0$m'_'$line'_unpair_1'.fastq ./MSP_map/msp_0$m'_'$line'_unpair_2'.fastq > ./MSP_map/msp_0$m'_'$line'_unpair'.fastq 
+spades.py --only-assembler -t 4 -m 100 -1 ./MSP_map_use/msp_0$m'_'$S'_'pair_1.fastq -2 ./MSP_map_use/msp_0$m'_'$S'_'pair_2.fastq -s ./MSP_map_use/msp_0$m'_'$S'_'unpair.fastq -o ./MSP_assemble_specific/msp_0$m
